@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+latest="$(curl -sS https://management-api-releases.s3.eu-central-1.amazonaws.com/management-api-versions.json | jq -r .latest)"
+version="v$(echo ${latest} | jq -r .version)"
+
+echo "Updating the client to version ${version}..."
+
+location="$(echo ${latest} | jq -r .location)"
+schema="$(basename "${location}")"
+curl -sS "${location}" -o "${schema}"
+
+cleanup() {
+    rm "${schema}"
+}
+trap cleanup EXIT
+
+go install github.com/deepmap/oapi-codegen/cmd/oapi-codegen@v1.8.3
+output="managementapisdk.go"
+oapi-codegen -package managementapisdk -generate types,client -o "${output}" "${schema}"
+
+go mod tidy
+go build
+
+if [[ $(git status ${output} --porcelain) ]]; then
+    git config --global user.email "ci@example.com"--porcelain
+    git config --global user.name "CI"
+    git add "${output}" go.mod go.sum
+    git commit -m "Updating the client to version ${version}" || true
+    git tag ${version}
+    git push origin ${version}
+    git push
+    echo "Successfully updated the client to version ${version}!"
+else
+    echo "The SDK is already up to date with the latest released version ${version}"
+fi
